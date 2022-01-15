@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Sentry breakdown</title>
+    <script type="module">
+      import init from './pkg/sentry_breakdown.js';
+      const wasm = await init();
+      wasm.main();
+    </script>
+  </head>
+  <body>
+    <div>
+      <input type="file" id="csv-input">
+    </div>
+    <canvas id="chart" width="1920" height="1080"></canvas>
+    <div id="tooltip"></div>
+    <div id="table"></div>
+  </body>
+</html>
+
