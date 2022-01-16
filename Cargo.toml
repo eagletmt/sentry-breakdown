@@ -8,8 +8,13 @@ edition = "2021"
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
+futures-channel = "0.3"
+futures-util = "0.3"
+gloo-events = "0.1"
+gloo-file = { version = "0.2", features = ["futures"] }
 plotters = { version = "0.3", default-features = false, features = ["chrono", "line_series"] }
 plotters-canvas = "0.3"
 serde = { version = "1", features = ["derive"] }
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["Document", "Text", "Event", "HtmlInputElement", "FileList", "File", "Blob", "MouseEvent", "CssStyleDeclaration", "HtmlElement"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Text", "MouseEvent", "CssStyleDeclaration"] }

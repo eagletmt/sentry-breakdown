@@ -1,6 +1,6 @@
 use plotters::prelude::*;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast as _;
+use wasm_bindgen::UnwrapThrowExt as _;
 
 #[derive(Debug, serde::Deserialize)]
 struct Record {
@@ -20,34 +20,37 @@ fn main() {
     let csv_input = document
         .get_element_by_id("csv-input")
         .expect_throw("#csv-input is not found");
-    let cb = Closure::wrap(Box::new(handle_csv_input) as Box<dyn FnMut(web_sys::Event)>);
-    csv_input
-        .add_event_listener_with_callback("change", cb.as_ref().unchecked_ref())
-        .expect_throw("failed to add event listener to #csv-input");
-    cb.forget();
+
+    let (tx, mut rx) = futures_channel::mpsc::unbounded();
+    let listener =
+        gloo_events::EventListener::new(&csv_input, "change", move |evt: &web_sys::Event| {
+            tx.unbounded_send(
+                evt.current_target()
+                    .expect_throw("Event#currentTarget is not defined")
+                    .dyn_into::<web_sys::HtmlInputElement>()
+                    .expect_throw("Event#currentTarget is not HtmlInputElement"),
+            )
+            .expect_throw("failed to send change event");
+        });
+    wasm_bindgen_futures::spawn_local(async move {
+        let _guard = listener;
+        use futures_util::StreamExt as _;
+        while let Some(input) = rx.next().await {
+            handle_csv_input(input).await;
+        }
+    });
 }
 
-fn handle_csv_input(evt: web_sys::Event) {
-    let csv_input = evt
-        .current_target()
-        .expect_throw("Event#currentTarget is not defined")
-        .dyn_into::<web_sys::HtmlInputElement>()
-        .expect_throw("Event#currentTarget is not HtmlInputElement");
-    let file = csv_input
-        .files()
-        .expect_throw("HtmlInputElement#files is not defined")
-        .get(0)
-        .expect_throw("FileList#get(0) is not defined");
-    let cb = Closure::wrap(Box::new(on_file_read_finished) as Box<dyn FnMut(JsValue)>);
-    let _ = file.text().then(&cb);
-    cb.forget();
-}
-
-fn on_file_read_finished(text: JsValue) {
-    let text = text
-        .as_string()
-        .expect_throw("File#text() is resolved to non-string value");
-    let iter = csv::Reader::from_reader(text.as_bytes()).into_deserialize();
+async fn handle_csv_input(csv_input: web_sys::HtmlInputElement) {
+    let file_list = gloo_file::FileList::from(
+        csv_input
+            .files()
+            .expect_throw("HtmlInputElement#files is not defined"),
+    );
+    let text = gloo_file::futures::read_as_bytes(&file_list[0])
+        .await
+        .expect_throw("File#text() failed");
+    let iter = csv::Reader::from_reader(text.as_slice()).into_deserialize();
 
     let mut series_hash = std::collections::HashMap::new();
     let mut min_date = chrono::naive::MAX_DATE;
@@ -174,8 +177,7 @@ fn on_file_read_finished(text: JsValue) {
         .draw()
         .expect_throw("failed to draw series label");
     canvas.present().expect_throw("failed to present chart");
-    let coord_trans = std::rc::Rc::new(chart.into_coord_trans());
-    let all_series = std::rc::Rc::new(all_series);
+    let coord_trans = chart.into_coord_trans();
     let tooltip = document
         .get_element_by_id("tooltip")
         .expect_throw("failed to find #tooltip element");
@@ -184,73 +186,83 @@ fn on_file_read_finished(text: JsValue) {
         .expect_throw("failed to find #chart element")
         .dyn_into::<web_sys::HtmlCanvasElement>()
         .expect_throw("failed to cast #chart into HtmlCanvasElement");
-    let cb = Closure::wrap(Box::new(move |evt: web_sys::MouseEvent| {
-        let f = coord_trans.clone();
-        if let Some((date, _)) = f((
-            evt.client_x() - chart_element.offset_left(),
-            evt.client_y() - chart_element.offset_top(),
-        )) {
-            let mut ordered_series: Vec<(&str, u64, usize)> = all_series
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, (name, series, _))| {
-                    series.get(&date).map(|&count| (name.as_str(), count, idx))
-                })
-                .collect();
-            if ordered_series.is_empty() {
-                tooltip.set_inner_html("");
-                return;
-            }
-            ordered_series.sort_unstable_by(|a, b| a.1.cmp(&b.1).reverse().then(a.0.cmp(&b.0)));
-            let window = web_sys::window().expect_throw("window is not defined");
-            let document = window
-                .document()
-                .expect_throw("window.document is not defined");
-            let div = document
-                .create_element("div")
-                .expect_throw("failed to create div element")
-                .dyn_into::<web_sys::HtmlElement>()
-                .unwrap();
-            div.set_text_content(Some(&format!("{}", date)));
-            let ol = document
-                .create_element("ol")
-                .expect_throw("failed to create ol element");
-            for (name, count, idx) in ordered_series {
-                let li = document
-                    .create_element("li")
-                    .expect_throw("failed to create li element");
-                let span = document
-                    .create_element("span")
-                    .expect_throw("failed to create span element")
+
+    let (tx, mut rx) = futures_channel::mpsc::unbounded();
+    let listener =
+        gloo_events::EventListener::new(&window, "mousemove", move |evt: &web_sys::Event| {
+            let evt = evt
+                .dyn_ref::<web_sys::MouseEvent>()
+                .expect_throw("failed to cast Event to MouseEvent");
+            tx.unbounded_send((evt.client_x(), evt.client_y()))
+                .expect_throw("failed to send MouseEvent");
+        });
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let _guard = listener;
+        use futures_util::StreamExt as _;
+        while let Some((client_x, client_y)) = rx.next().await {
+            if let Some((date, _)) = coord_trans((
+                client_x - chart_element.offset_left(),
+                client_y - chart_element.offset_top(),
+            )) {
+                let mut ordered_series: Vec<(&str, u64, usize)> = all_series
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, (name, series, _))| {
+                        series.get(&date).map(|&count| (name.as_str(), count, idx))
+                    })
+                    .collect();
+                if ordered_series.is_empty() {
+                    tooltip.set_inner_html("");
+                    continue;
+                }
+                ordered_series.sort_unstable_by(|a, b| a.1.cmp(&b.1).reverse().then(a.0.cmp(&b.0)));
+                let window = web_sys::window().expect_throw("window is not defined");
+                let document = window
+                    .document()
+                    .expect_throw("window.document is not defined");
+                let div = document
+                    .create_element("div")
+                    .expect_throw("failed to create div element")
                     .dyn_into::<web_sys::HtmlElement>()
                     .unwrap();
-                span.set_text_content(Some("■"));
-                let (r, g, b) = Palette99::pick(idx).rgb();
-                span.style()
-                    .set_css_text(&format!("color: rgb({}, {}, {});", r, g, b));
-                li.append_child(&span)
-                    .expect_throw("failed to append span element to li element");
-                li.append_child(&document.create_text_node(&format!("{} {}", name, count)))
-                    .expect_throw("failed to append text node to li element");
-                ol.append_child(&li)
-                    .expect_throw("failed to append li element to ol element");
+                div.set_text_content(Some(&format!("{}", date)));
+                let ol = document
+                    .create_element("ol")
+                    .expect_throw("failed to create ol element");
+                for (name, count, idx) in ordered_series {
+                    let li = document
+                        .create_element("li")
+                        .expect_throw("failed to create li element");
+                    let span = document
+                        .create_element("span")
+                        .expect_throw("failed to create span element")
+                        .dyn_into::<web_sys::HtmlElement>()
+                        .unwrap();
+                    span.set_text_content(Some("■"));
+                    let (r, g, b) = Palette99::pick(idx).rgb();
+                    span.style()
+                        .set_css_text(&format!("color: rgb({}, {}, {});", r, g, b));
+                    li.append_child(&span)
+                        .expect_throw("failed to append span element to li element");
+                    li.append_child(&document.create_text_node(&format!("{} {}", name, count)))
+                        .expect_throw("failed to append text node to li element");
+                    ol.append_child(&li)
+                        .expect_throw("failed to append li element to ol element");
+                }
+                div.append_child(&ol)
+                    .expect_throw("failed to append ol element to div element");
+                div.style()
+                .set_css_text(&format!("position: absolute; padding: 10px; color: rgb(255, 255, 255); background-color: rgba(0, 0, 0, 0.7); left: {}px; top: {}px;", client_x, client_y));
+                tooltip.set_inner_html("");
+                tooltip
+                    .append_child(&div)
+                    .expect_throw("failed to append div element to #tooltip");
+            } else {
+                tooltip.set_inner_html("");
             }
-            div.append_child(&ol)
-                .expect_throw("failed to append ol element to div element");
-            div.style()
-                .set_css_text(&format!("position: absolute; padding: 10px; color: rgb(255, 255, 255); background-color: rgba(0, 0, 0, 0.7); left: {}px; top: {}px;", evt.client_x(), evt.client_y()));
-            tooltip.set_inner_html("");
-            tooltip
-                .append_child(&div)
-                .expect_throw("failed to append div element to #tooltip");
-        } else {
-            tooltip.set_inner_html("");
         }
-    }) as Box<dyn FnMut(web_sys::MouseEvent)>);
-    window
-        .add_event_listener_with_callback("mousemove", cb.as_ref().unchecked_ref())
-        .expect_throw("failed to add mousemove callback");
-    cb.forget();
+    });
 
     let table = document
         .create_element("table")
