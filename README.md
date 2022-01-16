@@ -2,18 +2,22 @@
 Render Sentry project breakdown of usage report (WIP)
 
 ## Prerequisites
-Install [wasm-pack](https://github.com/rustwasm/wasm-pack)
+Install [trunk](https://trunkrs.dev/)
 
-## How to build and run
+## Run locally
 ```
-% wasm-pack build --target web --release
-[INFO]: Checking for the Wasm target...
-[INFO]: Compiling to Wasm...
-    Finished release [optimized] target(s) in 0.02s
-[INFO]: Installing wasm-bindgen...
-[INFO]: Optimizing wasm binaries with `wasm-opt`...
-[INFO]: Optional fields missing from Cargo.toml: 'description', 'repository', and 'license'. These are not necessary, but recommended
-[INFO]: :-) Done in 6.07s
-[INFO]: :-) Your wasm pkg is ready to publish at /home/eagletmt/.clg/github.com/eagletmt/sentry-breakdown/pkg.
-% docker run --publish 80:80 -v "$PWD:/usr/share/nginx/html:ro" public.ecr.aws/nginx/nginx:mainline
+% trunk serve
+eagletmt@reinforce% trunk serve                                                                                                                                                           git-main[~/.clg/github.com/eagletmt/sentry-breakdown]
+Jan 16 13:02:35.690  INFO 📦 starting build
+Jan 16 13:02:35.691  INFO spawning asset pipelines
+Jan 16 13:02:35.760  INFO building sentry-breakdown
+    Finished dev [unoptimized + debuginfo] target(s) in 0.02s
+Jan 16 13:02:35.831  INFO fetching cargo artifacts
+Jan 16 13:02:35.901  INFO processing WASM
+Jan 16 13:02:35.923  INFO calling wasm-bindgen
+Jan 16 13:02:36.168  INFO copying generated wasm-bindgen artifacts
+Jan 16 13:02:36.171  INFO applying new distribution
+Jan 16 13:02:36.172  INFO ✅ success
+Jan 16 13:02:36.173  INFO 📡 serving static assets at -> /
+Jan 16 13:02:36.173  INFO 📡 server listening at 0.0.0.0:8080
 ```

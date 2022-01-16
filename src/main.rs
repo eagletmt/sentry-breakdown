@@ -12,8 +12,7 @@ struct Record {
     total_errors: u64,
 }
 
-#[wasm_bindgen]
-pub fn main() {
+fn main() {
     let window = web_sys::window().expect_throw("window is not defined");
     let document = window
         .document()
